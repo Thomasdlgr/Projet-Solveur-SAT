@@ -1,0 +1,5 @@
+c An empty clause (a line with only 0) can never be satisfied.
+p cnf 2 3
+1 2 0
+0
+-1 0

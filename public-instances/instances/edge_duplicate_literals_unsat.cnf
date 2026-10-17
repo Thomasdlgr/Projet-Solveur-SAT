@@ -1,0 +1,4 @@
+c Repeated literals: 1 1 is the clause x1, -1 -1 is the clause not x1.
+p cnf 1 2
+1 1 0
+-1 -1 0

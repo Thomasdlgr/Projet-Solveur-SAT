@@ -1,3 +1,18 @@
 .venv/
 __pycache__/
 *.py[cod]
+
+# macOS
+.DS_Store
+
+# Fichiers intermédiaires LaTeX (pdflatex / latexmk)
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Instances SATLIB : recréées par download_satlib.py
+data/satlib/
