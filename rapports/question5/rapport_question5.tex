@@ -1,0 +1,385 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small, frame=single, breaklines=true,
+  columns=fullflexible, keepspaces=true}
+\title{Projet MLSF : résolution du jeu Meowdoku\\
+  \large Question 5 : analyse des performances des heuristiques}
+\author{}
+\date{}
+
+% Courbe « instances résolues en fonction du temps CPU » d'une heuristique.
+\newcommand{\cactus}[3]{\addplot[mark=none, thick, #3] table[x=cpu, y=solved]
+  {generated/cactus-#1-#2.dat}; \addlegendentry{#2}}
+
+\begin{document}
+\maketitle
+
+\section{Objectif et protocole}
+
+La question demande d'instrumenter les solveurs DPLL$_H$ de la question 4,
+de les comparer sur des instances variées (forme, statut SAT/UNSAT,
+Meowdoku), puis de répondre à trois questions : les résultats sont-ils
+conformes à nos intuitions, combien une heuristique améliore-t-elle
+l'algorithme 2, et le recalcul dynamique vaut-il son coût ?
+
+Toutes les mesures sont produites par \texttt{bench\_q5.py}, en deux étapes :
+\begin{lstlisting}
+uv run python bench_q5.py run --timeout 60    # environ 10 minutes, 6 processus
+uv run python bench_q5.py report              # tableaux et courbes de ce rapport
+\end{lstlisting}
+La première étape écrit une ligne par résolution dans
+\texttt{results/q5\_runs.csv} ; la seconde produit les fichiers du dossier
+\texttt{rapports/question5/generated}, inclus directement dans ce rapport.
+Les tableaux ne sont donc jamais recopiés à la main.
+
+\subsection{Instances}
+
+Nous avons retenu 173 instances réparties en cinq familles, choisies pour
+couvrir les trois axes demandés :
+\begin{itemize}
+  \item \textbf{3-SAT aléatoire SAT et UNSAT} : 30 instances uf50 et 20 uf75
+    (SAT), 30 uuf50 et 20 uuf75 (UNSAT) de SATLIB, au seuil de
+    satisfiabilité ($m/n \approx 4{,}26$), là où le 3-SAT aléatoire est le
+    plus difficile. Elles n'ont aucune structure : c'est le cas où une
+    heuristique ne peut s'appuyer que sur des statistiques d'occurrences.
+  \item \textbf{Instances structurées} : les 23 instances publiques des
+    enseignants qui ne sont pas du 3-SAT aléatoire à 50 variables
+    (coloration de graphes, planification, circuits, pigeons,
+    quasigroupes\dots), de 42 à 1363 variables ; 17 SAT et 6 UNSAT.
+  \item \textbf{Meowdoku (question 1)} : 20 grilles produites par notre
+    générateur, de taille $n = 8$, 10, 12, 14 et 16 (4 par taille), SAT
+    par construction.
+  \item \textbf{Meowdoku à régions aléatoires} : 30 grilles de taille 6 à
+    10 dont les $n$ régions connexes sont grandies depuis $n$ cases tirées
+    au hasard, sans solution placée à l'avance (fonction
+    \texttt{random\_regions\_grid}).
+    Elles fournissent des grilles Meowdoku \textbf{UNSAT}, que le générateur
+    de la question 1 ne produit pas : 7 sont SAT et 23 UNSAT.
+\end{itemize}
+Le statut de chaque instance est connu (SATLIB, \texttt{expected.json},
+construction) sauf pour les grilles à régions aléatoires, dont le statut est
+celui renvoyé par les heuristiques. Le script s'arrête si deux heuristiques
+se contredisent ou si un modèle renvoyé ne satisfait pas la formule :
+aucune contradiction ni aucun modèle faux sur les 2768 résolutions.
+
+\subsection{Critères mesurés}
+
+Les quatre compteurs de l'énoncé sont ceux de la classe \texttt{Stats}
+de \texttt{dpll.py}, incrémentés aux lignes correspondantes de
+l'algorithme : décisions (ligne 17), retours arrière (ligne 21),
+propagations unitaires (ligne 5) et littéraux purs (ligne 11). S'y ajoutent :
+\begin{itemize}
+  \item le \textbf{temps CPU} (\texttt{time.process\_time}) ;
+  \item la \textbf{part du temps passée dans l'heuristique} : temps cumulé
+    des appels à \texttt{choose}, divisé par la durée de la résolution ;
+  \item trois critères de notre choix :
+    \begin{itemize}
+      \item le \textbf{nombre d'instances résolues} dans le délai de 60 s,
+        celui de la compétition ;
+      \item le \textbf{score PAR-2}, temps moyen où une instance non résolue
+        compte pour deux fois le délai (120 s). C'est la mesure des
+        compétitions SAT : elle combine vitesse et robustesse ;
+      \item le nombre de \textbf{propagations unitaires par décision},
+        qui mesure ce qu'une décision \og rapporte \fg{}.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Choix méthodologiques}
+
+\paragraph{Compteurs sur les instances résolues par toutes les
+heuristiques.} Une résolution interrompue a des compteurs partiels :
+comparer ses 10\,000 décisions aux 50 d'une heuristique qui a conclu n'a pas
+de sens. Les médianes des compteurs sont donc calculées sur les instances
+résolues par les 16 heuristiques du groupe ; le nombre de résolues et le
+PAR-2 portent, eux, sur toutes les instances.
+
+\paragraph{Médianes et moyennes géométriques.} Les temps et les compteurs
+varient sur plusieurs ordres de grandeur d'une instance à l'autre : une
+moyenne arithmétique serait dominée par une ou deux instances. Nous
+utilisons des médianes et, pour comparer une heuristique à H0, la
+\textbf{moyenne géométrique des rapports} $\text{H0}/H$ calculés instance par
+instance : c'est la moyenne adaptée à des rapports (un gain $\times 2$ et une
+perte $\times 2$ se compensent). Pour les décisions on utilise
+$(d_{\text{H0}}+1)/(d_H+1)$, car certaines instances n'en demandent aucune.
+
+\paragraph{Une graine par instance pour H0.} H0 est aléatoire. Sa graine
+dérive du nom de l'instance : chaque instance a son propre tirage et la
+campagne est reproductible. La variabilité due à la graine a été étudiée à
+la question 2 ; elle est ici moyennée sur les nombreuses instances de
+chaque groupe.
+
+\paragraph{Parallélisme.} Les 2768 résolutions sont réparties sur 6
+processus (\texttt{multiprocessing}). Le temps CPU est mesuré dans chaque
+processus et ne compte donc pas le travail des autres. Les plus gros
+fichiers passent en premier pour éviter qu'une longue résolution lancée
+en dernier retarde la fin de la campagne.
+
+\section{Résultats par groupe}
+
+Les familles qui mélangent les deux statuts (instances structurées,
+grilles aléatoires) sont séparées en SAT et UNSAT, comme le suggère
+l'énoncé :
+\begin{center}
+\input{generated/groupes.tex}
+\end{center}
+
+Pour chaque groupe, le tableau donne le nombre d'instances résolues, le
+PAR-2, puis les médianes des compteurs (sur les instances résolues par
+toutes), les propagations unitaires par décision et la part du temps
+passée dans l'heuristique.
+
+\newcommand{\detail}[2]{%
+  \begin{table}[htbp]\centering\small
+  \input{generated/detail-#1.tex}
+  \caption{#2}\end{table}}
+
+\detail{uf}{3-SAT aléatoire SAT (uf50, uf75).}
+\detail{uuf}{3-SAT aléatoire UNSAT (uuf50, uuf75).}
+\detail{struct-sat}{Instances structurées SAT.}
+\detail{struct-unsat}{Instances structurées UNSAT. Le PAR-2 est dominé par
+  public-03, qu'aucune heuristique ne résout.}
+\detail{meow}{Grilles Meowdoku de la question 1 (SAT).}
+\detail{meowr-sat}{Grilles Meowdoku à régions aléatoires, SAT.}
+\detail{meowr-unsat}{Grilles Meowdoku à régions aléatoires, UNSAT.}
+
+\clearpage
+\section{Gain par rapport à l'algorithme 2}
+
+Les deux tableaux suivants résument les précédents : pour chaque groupe, la
+moyenne géométrique du rapport $\text{H0}/H$ sur les instances résolues par
+toutes les heuristiques. Une valeur supérieure à 1 signifie que $H$ fait
+mieux que l'algorithme 2. Entre parenthèses, le nombre d'instances
+résolues par $H$ en moins de 60 s.
+
+\begin{table}[htbp]\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\input{generated/synthese-temps.tex}
+\caption{Gain en temps CPU par rapport à H0 (nombre d'instances résolues).}
+\label{tab:gain-temps}
+\end{table}
+\begin{table}[htbp]\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\input{generated/synthese-decisions.tex}
+\caption{Gain en nombre de décisions par rapport à H0.}
+\label{tab:gain-decisions}
+\end{table}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{semilogxaxis}[width=0.92\linewidth, height=7.5cm, xlabel={temps CPU (s)},
+  ylabel={instances résolues}, legend pos=south east, legend columns=2,
+  legend style={font=\small}, grid=major, xmin=1e-3, xmax=60]
+  \cactus{satlib}{H0}{black}
+  \cactus{satlib}{H1}{gray}
+  \cactus{satlib}{H2d}{orange}
+  \cactus{satlib}{H4s}{blue, dashed}
+  \cactus{satlib}{H4d}{blue}
+  \cactus{satlib}{H6d}{red}
+  \cactus{satlib}{H8d}{green!60!black}
+\end{semilogxaxis}
+\end{tikzpicture}
+\caption{Nombre d'instances résolues (3-SAT aléatoire et structurées, 123
+  instances) en fonction du temps CPU accordé à chacune. Plus une courbe est
+  haute et à gauche, meilleure est l'heuristique.}
+\label{fig:cactus-satlib}
+\end{figure}
+
+\paragraph{3-SAT aléatoire.} C'est là que les heuristiques apportent le
+plus : toutes celles fondées sur les occurrences (H2 à H8) divisent le
+temps de 5 à 15 et le nombre de décisions de 5 à 22. La meilleure est
+\textbf{H4d} (MOMS dynamique) : 17 décisions médianes contre 249 pour H0
+sur les instances SAT, 40 contre 568 sur les UNSAT, soit un gain en temps
+de 11 et 15. H6d (Jeroslow-Wang dynamique) la suit de près. H1 ne fait
+pas mieux que le hasard : l'ordre des numéros de variables n'a aucun sens
+sur une formule aléatoire.
+
+\paragraph{SAT contre UNSAT.} Les gains sont plus forts sur les instances
+UNSAT (jusqu'à 22 en décisions contre 13 en SAT). C'est attendu : pour
+prouver l'insatisfiabilité, DPLL doit parcourir tout l'arbre de recherche,
+et une bonne heuristique en réduit la taille entière. Sur une instance SAT,
+même un mauvais choix peut tomber rapidement sur une solution, ce qui
+réduit l'écart. Sur les UNSAT, décisions et retours arrière sont égaux :
+chaque décision finit par être réfutée.
+
+\paragraph{Instances structurées.} Les gains en temps sont plus modestes en
+SAT (de 1,3 à 3,7) mais spectaculaires en UNSAT (jusqu'à 25 pour H4s) : les
+heuristiques sensibles à la taille des clauses (H4 à H8) font 26 à 40 fois
+moins de décisions que H0, contre 3 à 8 fois pour H2 et H3. Ce sont aussi les seules qui
+résolvent toutes les instances SAT structurées : \textbf{H4d, H5d et H8d}
+(17/17). La courbe de la figure~\ref{fig:cactus-satlib} montre que H4d domine
+les autres sur l'ensemble des 123 instances non Meowdoku : avec 0,1 s par
+instance elle en résout 111, contre 50 pour H0 ; H4d, H5d et H8d en
+résolvent 122 en 60 s.
+Aucune heuristique ne résout public-03 (UNSAT, 63 variables), une des
+deux instances annoncées comme difficiles : réduire l'arbre ne suffit pas,
+il faudra une structure de données plus efficace (question 6).
+
+\section{Meowdoku}
+
+\begin{table}[htbp]\centering\small
+\input{generated/meowdoku-taille.tex}
+\caption{Temps CPU médian (s) par taille de grille, Meowdoku de la
+  question 1 (4 grilles par taille).}
+\label{tab:taille}
+\end{table}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{semilogxaxis}[width=0.92\linewidth, height=7cm, xlabel={temps CPU (s)},
+  ylabel={instances résolues}, legend pos=south east, legend columns=2,
+  legend style={font=\small}, grid=major, xmin=1e-3, xmax=60]
+  \cactus{meowdoku}{H0}{black}
+  \cactus{meowdoku}{H1}{gray}
+  \cactus{meowdoku}{H2s}{orange, dashed}
+  \cactus{meowdoku}{H2d}{orange}
+  \cactus{meowdoku}{H6d}{red}
+  \cactus{meowdoku}{H8s}{green!60!black, dashed}
+  \cactus{meowdoku}{H8d}{green!60!black}
+\end{semilogxaxis}
+\end{tikzpicture}
+\caption{Nombre de grilles Meowdoku résolues (50 grilles) en fonction du
+  temps CPU accordé à chacune.}
+\label{fig:cactus-meowdoku}
+\end{figure}
+
+\paragraph{H8 est nettement la meilleure.} Sur les grilles de la question 1,
+H8s et H8d sont environ 3 fois plus rapides que H0 en moyenne géométrique et
+\textbf{7 à 8 fois plus rapides} sur les grilles $16 \times 16$ (0,07 s contre
+0,53 s en médiane, tableau~\ref{tab:taille}). Leur temps croît beaucoup
+moins vite avec la taille que celui de toutes les autres heuristiques. Une
+décision de H8 (placer un chat dans la plus petite région) déclenche environ
+16 propagations unitaires, contre 9 pour H0 et 0,2 pour H2d.
+
+\paragraph{H2 à H7 : beaucoup de décisions, mais aucun retour arrière.}
+La question 4 avait montré que, sur les petites grilles, H2 à H7 font plus de
+décisions que le hasard (115 décisions médianes pour H2d contre 54 pour H0).
+Les nouveaux compteurs nuancent ce constat : ces heuristiques ne font
+\textbf{aucun} retour arrière (médiane 0 pour les versions dynamiques,
+contre 43 pour H0). Elles affectent à 0 une case très contrainte après
+l'autre (\og pas de chat ici \fg{}), jusqu'à ce que la clause
+\og au moins un chat \fg{} d'une région devienne unitaire. Chaque décision
+rapporte peu (0,2 propagation par décision) mais n'est presque jamais
+remise en cause. Sur les grilles $16 \times 16$, cette stratégie prudente
+rattrape H0, dont les mauvais choix aléatoires coûtent cher : elles ont un
+PAR-2 bien meilleur (0,12 s contre 2,03 s), même si leur moyenne
+géométrique reste légèrement inférieure à celle de H0 (0,7 à 0,9) à cause
+des petites grilles. Le nombre de décisions seul est donc un indicateur
+trompeur : il faut le lire avec le nombre de retours arrière.
+
+\paragraph{Grilles UNSAT.} Les 23 grilles à régions aléatoires UNSAT sont
+faciles : H0 et H8 concluent en une ou deux décisions, la contradiction
+apparaissant presque immédiatement par propagation (par exemple deux
+petites régions adjacentes). La plupart des variantes de H2 à H7 font au
+contraire une vingtaine de décisions, toutes réfutées (sauf H4s et H5s, qui
+concluent en une décision) : en choisissant \og pas de chat \fg{}, elles
+retardent la propagation qui ferait apparaître la contradiction.
+H8 est ici 4 à 5 fois plus économe en décisions que H0 et 2 fois plus
+rapide.
+
+\section{Statique ou dynamique ?}
+
+Le tableau suivant compare les deux variantes de chaque heuristique sur
+toutes les instances résolues par les deux. \og décisions s/d \fg{} est le
+rapport (moyenne géométrique) du nombre de décisions de la variante
+statique à celui de la variante dynamique : au-dessus de 1, le dynamique
+choisit mieux. \og coût d'un choix d/s \fg{} compare le temps moyen d'un
+appel à l'heuristique. \og temps s/d \fg{} est le rapport des temps CPU :
+au-dessus de 1, le dynamique est plus rapide au total.
+\begin{center}\small
+\input{generated/statique-dynamique.tex}
+\end{center}
+
+\paragraph{Lecture.} Le recalcul dynamique améliore \emph{toujours} la
+qualité des choix : la variante statique fait de 1,2 (H3) à 1,8 (H6) fois
+plus de décisions que la variante dynamique. Mais
+chaque choix coûte 4 à 7 fois plus cher, et la part du temps passée dans
+l'heuristique passe d'environ 8\,\% à 20--40\,\%. Le bilan dépend donc du
+gain en qualité :
+\begin{itemize}
+  \item pour \textbf{H4 et H6} (MOMS et Jeroslow-Wang), le gain en
+    décisions est grand ($\times 1{,}7$ à $1{,}8$) et compense largement le
+    coût : la version dynamique est 17 à 31\,\% plus rapide ;
+  \item pour \textbf{H2 et H3} (fréquences brutes), le gain est faible
+    ($\times 1{,}2$ à $1{,}3$) et la version dynamique est 13 à 15\,\% plus
+    lente ;
+  \item H5, H7 et H8 sont à l'équilibre.
+\end{itemize}
+C'est cohérent avec l'intuition : H4 et H6 privilégient les clauses courtes,
+dont la taille change à chaque simplification ; un classement calculé sur
+la formule initiale devient vite faux. Les fréquences brutes de H2 et H3
+évoluent moins, et les recalculer rapporte peu. Les variantes dynamiques
+résolvent aussi plus d'instances difficiles (public-12 n'est résolue par
+aucune variante statique, ni par H0 ou H1, mais par toutes les
+dynamiques). Sur
+Meowdoku, le coût du recalcul atteint 75\,\% du temps pour H2d--H7d, et
+H8s y est la plus rapide.
+
+\paragraph{Remarque sur le coût.} Notre recalcul parcourt toute la formule
+à chaque décision. Le coût d'un choix dynamique (4 à 7 fois celui d'un choix
+statique) est donc une borne haute : une mise à jour incrémentale des
+compteurs, faite pendant la simplification, le réduirait. C'est une piste
+pour la question 6.
+
+\section{Réponses aux questions de l'énoncé}
+
+\paragraph{Les résultats sont-ils conformes à nos intuitions ?} En grande
+partie :
+\begin{itemize}
+  \item les heuristiques fondées sur les occurrences battent largement le
+    hasard sur le 3-SAT aléatoire, et plus encore sur les instances UNSAT,
+    comme attendu ;
+  \item favoriser les clauses courtes (H4, H6) est le meilleur critère
+    général, conformément à l'intuition de l'énoncé (les clauses courtes
+    deviennent unitaires et déclenchent la propagation) ;
+  \item H1 n'apporte rien, ce qui était prévisible.
+\end{itemize}
+Deux résultats nous ont surpris. D'abord, sur Meowdoku, H2 à H7 choisissent
+systématiquement la mauvaise polarité, ce qui nous a conduits à concevoir
+H8 à la question 4. Ensuite, ce mauvais choix n'est pas catastrophique :
+il donne beaucoup de décisions mais aucun retour arrière, et finit par
+battre H0 sur les grandes grilles. Enfin, aucune heuristique n'est la
+meilleure partout : H4d domine le 3-SAT aléatoire, H8 domine Meowdoku, et
+H4d, H5d et H8d sont les seules à résoudre toutes les instances
+structurées SAT.
+
+\paragraph{De combien une heuristique améliore-t-elle l'algorithme 2 ?}
+Sur le 3-SAT aléatoire, d'un facteur 5 à 15 en temps et 5 à 22 en
+décisions ; sur les instances structurées UNSAT, jusqu'à 25 en temps et 40
+en décisions ; sur Meowdoku, d'un facteur 3 en moyenne et 8 sur les plus
+grandes grilles avec H8. Elles résolvent aussi des instances que
+l'algorithme 2 ne résout pas en 60 s (public-12 pour toutes les variantes
+dynamiques, public-06 pour la plupart des heuristiques). Le gain n'est pas
+universel : sur les petites grilles Meowdoku, H2 à H7 sont légèrement plus
+lentes que H0, et H2s ou H2d échouent sur public-04 ou public-21 que H0
+résout.
+
+\paragraph{Le recalcul dynamique vaut-il son coût ?} Il améliore toujours
+la qualité des choix (1,2 à 1,8 fois moins de décisions) mais multiplie
+le coût d'un choix par 4 à 7. Il est rentable pour les heuristiques qui
+tiennent compte de la taille des clauses (H4, H6), dont le classement
+change beaucoup au fil de la recherche ; il ne l'est pas pour les
+fréquences brutes (H2, H3) ni sur Meowdoku, où le calcul de l'heuristique
+représente jusqu'à 75\,\% du temps.
+
+\paragraph{Conséquences pour la question 6.} Pour le solveur optimisé de
+Meowdoku, nous retenons H8, qui est aussi parmi les plus robustes sur les
+instances structurées (H8d résout les 17 instances SAT structurées).
+Hors heuristique, 60 à 90\,\% du temps est passé dans la propagation, qui
+recopie la formule à chaque simplification : la prochaine étape est une
+structure de données sans recopie de la formule.
+
+\section{Usage des assistants IA}
+
+% TODO : à rédiger par le binôme (l'énoncé demande de le mentionner).
+
+\end{document}

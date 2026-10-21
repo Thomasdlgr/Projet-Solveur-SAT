@@ -16,3 +16,6 @@ __pycache__/
 
 # Instances SATLIB : recréées par download_satlib.py
 data/satlib/
+
+# Instances générées par bench_q5.py (recréées à chaque lancement)
+data/q5/
