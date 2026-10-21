@@ -296,7 +296,7 @@ uv run python validate.py data/satlib/uf50-218
 
 \begin{center}
 \begin{tabular}{lrrrrr}
-  Famille & Variables & Clauses & Instances & Échecs & Temps (algos 1 et 2) \\
+  Famille & Variables & Clauses & Instances & Échecs & Temps total (algos 1 et 2) \\
   \hline
   \texttt{uf20-91}   & 20 & 91  & 1000 & 0 & 1,0 s \\
   \texttt{uf50-218}  & 50 & 218 & 1000 & 0 & 52,9 s \\
@@ -305,7 +305,11 @@ uv run python validate.py data/satlib/uf50-218
   \texttt{uuf75-325} & 75 & 325 & 100  & 0 & 264,3 s \\
 \end{tabular}
 \end{center}
-Les 3200 instances sont correctement résolues par les deux algorithmes.
+Les 3200 instances sont correctement résolues par les deux algorithmes,
+sans aucun dépassement du délai. Le temps indiqué est le total pour toute la
+famille : pour uuf75-325, 264{,}3~s pour 100 instances, soit environ 2{,}6~s
+par instance pour les deux algorithmes, bien en dessous de la limite de
+60~s par instance.
 
 \paragraph{Instances publiques des enseignants.} Le dossier
 \texttt{public-instances} contient 41 fichiers et un fichier

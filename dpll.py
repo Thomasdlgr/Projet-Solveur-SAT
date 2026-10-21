@@ -9,6 +9,7 @@ affecter sa variable ``abs(l)`` à ``l > 0``.
 from dataclasses import dataclass
 import random
 import sys
+import time
 
 SAT = "SAT"
 UNSAT = "UNSAT"
@@ -22,6 +23,7 @@ class Stats:
     backtracks: int = 0
     unit_propagations: int = 0
     pure_literals: int = 0
+    heuristic_time: float = 0.0  # secondes passées dans le choix de branchement
 
 
 def simplify(clauses, literal):
@@ -132,8 +134,12 @@ def _dpll_sat(clauses, rng, stats):
     return _dpll_sat(simplify(clauses, -literal), rng, stats)
 
 
-def dpll(clauses, rng=None, stats=None):
+def dpll(clauses, rng=None, stats=None, choose=None):
     """Algorithme 2 : renvoie ``(SAT, valuation)`` ou ``(UNSAT, None)``.
+
+    ``choose(clauses) -> littéral`` est la fonction de branchement (ligne
+    17). Par défaut c'est RandomChoice (algorithme 2) ; ``heuristics.dpll_h``
+    passe ici une heuristique H pour obtenir l'algorithme 3.
 
     La valuation est un dictionnaire {variable: booléen}. Elle est partielle :
     une variable disparue de la formule sans avoir été affectée n'y figure
@@ -142,14 +148,16 @@ def dpll(clauses, rng=None, stats=None):
     Exemple :
         dpll([frozenset({1, 2}), frozenset({-1})])  # (SAT, {1: False, 2: True})
     """
-    rng = rng if rng is not None else random.Random()
+    if choose is None:
+        rng = rng if rng is not None else random.Random()
+        choose = lambda current: random_choice(current, rng)
     stats = stats if stats is not None else Stats()
     _raise_recursion_limit(clauses)
-    valuation = _dpll(list(clauses), rng, stats)
+    valuation = _dpll(list(clauses), choose, stats)
     return (UNSAT, None) if valuation is None else (SAT, valuation)
 
 
-def _dpll(clauses, rng, stats):
+def _dpll(clauses, choose, stats):
     """Renvoie une valuation (dict) si SAT, ``None`` si UNSAT."""
     forced = []
     status, clauses = _propagate(clauses, stats, forced)
@@ -159,12 +167,14 @@ def _dpll(clauses, rng, stats):
         valuation = {}
     else:
         stats.decisions += 1
-        literal = random_choice(clauses, rng)
-        valuation = _dpll(simplify(clauses, literal), rng, stats)
+        start = time.perf_counter()
+        literal = choose(clauses)
+        stats.heuristic_time += time.perf_counter() - start
+        valuation = _dpll(simplify(clauses, literal), choose, stats)
         if valuation is None:
             stats.backtracks += 1
             literal = -literal
-            valuation = _dpll(simplify(clauses, literal), rng, stats)
+            valuation = _dpll(simplify(clauses, literal), choose, stats)
             if valuation is None:
                 return None
         valuation[abs(literal)] = literal > 0

@@ -11,11 +11,16 @@ dans le dossier du fichier ou dans un dossier parent. À défaut, il est déduit
 du nom : préfixe ``uuf`` / ``uf`` (SATLIB), ou mention ``unsat`` / ``sat``.
 Il est inconnu sinon, et seule la cohérence est testée.
 
+Avec ``--heuristics H2d H6s ...`` (ou ``all``), chaque heuristique de la
+question 4 est aussi lancée (algorithme 3) : elle doit donner le même statut
+que l'algorithme 2 et, si SAT, un modèle correct.
+
 Chaque algorithme est interrompu après ``--timeout`` secondes (60 s, comme
 en compétition) ; l'instance est alors comptée comme « timeout ».
 
 Usage :
     python validate.py public-instances data/satlib [--timeout 60] [-v]
+    python validate.py data/satlib --heuristics all --timeout 10
 """
 
 import argparse
@@ -29,6 +34,7 @@ from pathlib import Path
 
 from dimacs import check_model, read_dimacs
 from dpll import SAT, UNSAT, complete, dpll, dpll_sat
+from heuristics import HEURISTICS, dpll_h
 
 TIMEOUT = "TIMEOUT"
 
@@ -82,25 +88,46 @@ def cnf_files(paths):
             yield path
 
 
-def validate(path, seed, timeout):
-    """Renvoie ``(statut, message d'erreur ou None, durée en secondes)``."""
+def validate(path, seed, timeout, heuristics=()):
+    """Renvoie ``(statut, message d'erreur ou None, durée en secondes,
+    heuristiques ayant dépassé le délai)``.
+
+    Le statut et la durée sont ceux des algorithmes 1 et 2. Chaque
+    heuristique est comparée à l'algorithme 2 ou, s'il a dépassé le délai,
+    au statut attendu. Une heuristique qui dépasse le délai n'est pas une
+    erreur, mais elle est signalée."""
     nb_vars, clauses = read_dimacs(path)
+    expected = expected_status(path)
     start = time.perf_counter()
     try:
         satisfiable = with_timeout(lambda: dpll_sat(clauses, random.Random(seed)), timeout)
         status, valuation = with_timeout(lambda: dpll(clauses, random.Random(seed)), timeout)
     except Timeout:
-        return TIMEOUT, None, time.perf_counter() - start
+        status = TIMEOUT
     elapsed = time.perf_counter() - start
 
-    if (status == SAT) != satisfiable:
-        return status, "les algorithmes 1 et 2 sont en désaccord", elapsed
-    expected = expected_status(path)
-    if expected is not None and status != expected:
-        return status, f"{expected} attendu", elapsed
-    if status == SAT and not check_model(clauses, complete(valuation, nb_vars)):
-        return status, "le modèle ne satisfait pas la formule", elapsed
-    return status, None, elapsed
+    if status != TIMEOUT:
+        if (status == SAT) != satisfiable:
+            return status, "les algorithmes 1 et 2 sont en désaccord", elapsed, []
+        if expected is not None and status != expected:
+            return status, f"{expected} attendu", elapsed, []
+        if status == SAT and not check_model(clauses, complete(valuation, nb_vars)):
+            return status, "le modèle ne satisfait pas la formule", elapsed, []
+
+    reference = status if status != TIMEOUT else expected
+    timeouts = []
+    for name in heuristics:
+        try:
+            status_h, valuation_h = with_timeout(
+                lambda: dpll_h(clauses, name, random.Random(seed)), timeout)
+        except Timeout:
+            timeouts.append(name)
+            continue
+        if reference is not None and status_h != reference:
+            return status, f"{name} renvoie {status_h}, {reference} attendu", elapsed, timeouts
+        if status_h == SAT and not check_model(clauses, complete(valuation_h, nb_vars)):
+            return status, f"le modèle de {name} ne satisfait pas la formule", elapsed, timeouts
+    return status, None, elapsed, timeouts
 
 
 def main(argv=None):
@@ -110,15 +137,25 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=60.0,
                         help="Délai par algorithme et par instance, en secondes")
+    parser.add_argument("--heuristics", nargs="+", default=[], metavar="H",
+                        help=f"Heuristiques à valider aussi : all ou {' '.join(HEURISTICS)}")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Affiche une ligne par fichier")
     args = parser.parse_args(argv)
+    heuristics = list(HEURISTICS) if "all" in args.heuristics else args.heuristics
+    unknown = [name for name in heuristics if name not in HEURISTICS]
+    if unknown:
+        parser.error(f"heuristique(s) inconnue(s) : {' '.join(unknown)}")
 
     counts = {SAT: 0, UNSAT: 0, TIMEOUT: 0}
     errors = 0
     total_time = 0.0
+    heuristic_timeouts = 0
     for path in cnf_files(args.paths):
-        status, error, elapsed = validate(path, args.seed, args.timeout)
+        status, error, elapsed, timeouts = validate(path, args.seed, args.timeout, heuristics)
+        heuristic_timeouts += len(timeouts)
+        if timeouts:
+            print(f"délai dépassé sur {path.name} : {' '.join(timeouts)}", flush=True)
         counts[status] += 1
         total_time += elapsed
         if args.verbose:
@@ -129,7 +166,9 @@ def main(argv=None):
 
     print(f"{sum(counts.values())} fichiers : {counts[SAT]} SAT, {counts[UNSAT]} UNSAT, "
           f"{counts[TIMEOUT]} timeout(s), {errors} échec(s), {total_time:.1f} s "
-          f"(algorithmes 1 et 2)")
+          f"(algorithmes 1 et 2)"
+          + (f", heuristiques vérifiées : {' '.join(heuristics)} "
+             f"({heuristic_timeouts} délai(s) dépassé(s))" if heuristics else ""))
     return 1 if errors else 0
 
 

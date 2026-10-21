@@ -33,7 +33,8 @@ from grid_generation import generate_meowdoku
 RESULTS = Path("results")
 SATLIB = Path("data/satlib")
 FIELDS = ["family", "instance", "algo", "seed", "status", "time",
-          "decisions", "backtracks", "unit_propagations", "pure_literals"]
+          "decisions", "backtracks", "unit_propagations", "pure_literals",
+          "heuristic_time"]
 
 
 class Timeout(Exception):
