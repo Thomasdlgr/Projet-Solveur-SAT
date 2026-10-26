@@ -1,0 +1,281 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small,frame=single,breaklines=true,
+  columns=fullflexible,keepspaces=true}
+\hypersetup{colorlinks=true,urlcolor=blue,linkcolor=blue}
+\title{Projet MLSF : résolution du jeu Meowdoku\\
+  \large Question 6 : conception et évaluation du solveur optimisé}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-1em}
+
+\section{Choix de conception}
+
+La question 5 a mis en évidence deux résultats : H8, qui privilégie les
+littéraux positifs, est adaptée à Meowdoku ; le recalcul d'une heuristique
+sur toute la formule peut coûter plus que le gain obtenu dans l'arbre de
+recherche. Le mode \texttt{optimized} de \texttt{sat.py} appelle désormais
+un moteur distinct, défini dans \texttt{optimized.py}. Le mode
+\texttt{dpll} conserve l'algorithme 2 de la question 2. Le nouveau moteur
+reste un DPLL complet, sans apprentissage de clauses ni dépendance externe.
+
+\subsection{Propager sans recopier la formule}
+
+Le DPLL initial reconstruit la liste des clauses à chaque affectation.
+Dans le moteur optimisé, les clauses sont conservées et les affectations
+sont enregistrées dans un tableau de valeurs et une pile chronologique
+(\emph{trail}). Une file implicite, repérée par un indice dans cette pile,
+contient les affectations dont les conséquences restent à propager.
+
+\paragraph{Clauses binaires.} Une clause $(a\lor b)$ est représentée par
+les implications $\neg a\Rightarrow b$ et $\neg b\Rightarrow a$.
+Fixer un littéral à vrai ne visite donc que ses conséquences. Cette
+représentation convient particulièrement aux nombreuses contraintes
+Meowdoku $(\neg x_{i,j}\lor\neg x_{k,l})$ : placer un chat exclut directement
+les cases incompatibles.
+
+\paragraph{Clauses d'au moins trois littéraux.} Deux littéraux sont
+surveillés. Lorsqu'un littéral surveillé devient faux, on cherche un
+remplaçant non faux. S'il n'en existe pas, l'autre surveillance est soit
+vraie (clause satisfaite), soit libre (propagation unitaire), soit fausse
+(conflit). Les clauses qui ne sont pas touchées ne sont pas parcourues.
+Les clauses unitaires initiales sont affectées avant la recherche ; une
+clause vide entraîne immédiatement UNSAT.
+
+\paragraph{Retour arrière.} Chaque niveau mémorise sa décision et la
+position de début dans le \emph{trail}. Un échec annule seulement les
+affectations de ce niveau, puis essaie la polarité opposée. La recherche
+est itérative : elle ne dépend pas de la limite de récursion de Python.
+Les tautologies et les clauses identiques sont éliminées au prétraitement.
+La règle du littéral pur n'est pas recherchée pendant la résolution, pour
+éviter un parcours global supplémentaire ; elle n'est pas nécessaire à
+la correction de DPLL.
+
+\subsection{Une heuristique adaptée à la forme de la CNF}
+
+Le prétraitement reconnaît une classe syntaxique : toutes les clauses sont
+soit entièrement positives, soit des exclusions binaires négatives.
+L'encodage Meowdoku de la question 1 appartient à cette classe, mais le
+test ne repose ni sur le nom du fichier ni sur une taille de grille.
+
+Pour cette classe, on choisit la clause positive non satisfaite qui a le
+moins de candidats encore libres, puis on essaie un candidat à vrai.
+Les égalités entre clauses suivent leur ordre d'entrée ; au sein d'une
+clause, les candidats sont départagés par le score positif initial
+$J^+(x)=\sum_{C\ni x}2^{-|C|}$, puis par le plus petit numéro de variable.
+C'est une adaptation de H8 : la priorité aux clauses positives courtes est
+actualisée, mais seules les clauses positives sont parcourues. Sur
+Meowdoku, il s'agit des clauses imposant au moins un chat par région,
+beaucoup moins nombreuses que les exclusions. Ce choix n'est pas
+strictement H8d lorsque plusieurs clauses positives se recouvrent.
+
+Pour les autres CNF, le moteur utilise H4d : il compte les occurrences dans
+les clauses résiduelles de taille minimale, choisit la variable la plus
+fréquente et essaie sa polarité majoritaire. Les égalités sont départagées
+par le plus petit numéro de variable, puis par la polarité positive.
+
+\clearpage
+\section{Correction, interface et validation}
+
+\subsection{Invariants de correction}
+
+Les implications binaires sont équivalentes à leurs clauses d'origine.
+Les surveillances détectent toute clause devenue unitaire ou contradictoire
+avant la prochaine décision. Au retour arrière, une variable passe de
+fixée à libre : les surveillances n'ont pas à être restaurées, car aucune
+nouvelle valeur fausse n'est introduite. La position de propagation est
+replacée au début du niveau annulé.
+
+Le branchement explore toujours les deux valeurs d'une variable libre.
+Un conflit à la racine, ou l'épuisement des deux branches à chaque niveau,
+permet de conclure UNSAT. Pour une CNF générale, SAT n'est renvoyé qu'une
+fois toutes les clauses satisfaites. Pour la classe de placement, il
+suffit que toutes les clauses positives soient satisfaites : les
+implications ont déjà interdit deux valeurs vraies incompatibles, et
+compléter les variables restantes à faux préserve les exclusions.
+Le modèle retourné affecte toutes les variables déclarées, même absentes
+des clauses. Ces arguments ne supposent pas que la grille soit solvable.
+
+\paragraph{Coût et limites algorithmiques.} Le stockage des clauses,
+implications, surveillances et affectations est linéaire dans la taille
+de la CNF, hors surcoût des objets Python. Le tri et la déduplication sont
+effectués une fois. Une propagation ne recopie pas la CNF ; elle visite
+les implications et clauses concernées. Une clause longue peut toutefois
+être parcourue plusieurs fois. La recherche reste exponentielle dans le
+pire cas ; les surveillances réduisent le coût des nœuds, pas nécessairement
+leur nombre. H4d parcourt encore la formule à chaque décision.
+
+\subsection{Interface imposée}
+
+\begin{lstlisting}
+python sat.py instance.cnf --mode dpll
+python sat.py instance.cnf --mode optimized --output-model
+\end{lstlisting}
+Par défaut, le mode est \texttt{optimized}. La sortie standard contient
+\texttt{s SATISFIABLE} ou
+\texttt{s UNSATISFIABLE}, et, pour SAT avec \texttt{--output-model}, une
+ligne \texttt{v ... 0}. Aucun modèle n'est écrit pour UNSAT.
+
+L'option facultative \texttt{--stats} écrit sur \textbf{stderr} un objet
+JSON contenant les durées et les compteurs. Elle ne modifie pas le format
+de sortie imposé. Les décisions comptent les nouveaux branchements ; les
+retours arrière comptent le passage à la polarité opposée ; les
+propagations comptent les nouvelles affectations forcées, unités initiales
+comprises. Le compteur de littéraux purs vaut zéro dans le moteur optimisé.
+Le temps de l'heuristique exclut le prétraitement et inclut la dernière
+vérification de terminaison. L'option \texttt{--seed} fixe les choix
+aléatoires du mode DPLL.
+
+\subsection{Vérifications effectuées}
+
+\begin{itemize}
+  \item Les tests du projet et les nouveaux tests passent : \textbf{54 tests}.
+  \item Le moteur optimisé est comparé à un oracle exhaustif sur
+    \textbf{2\,000 CNF aléatoires} de 1 à 9 variables, dont des CNF de
+    placement. Chaque modèle SAT est vérifié clause par clause.
+  \item Des tests ciblent les clauses vides, formules vides, tautologies,
+    doublons, unités contradictoires, déplacements de surveillance suivis
+    de retours arrière, ainsi que des recherches et propagations profondes.
+  \item Les tests d'interface contrôlent les deux modes, la complétude du
+    modèle et la séparation stdout/stderr. Le banc de mesure rejette un
+    modèle faux, incomplet, répété ou hors limites et une sortie parasite.
+\end{itemize}
+Les tests augmentent la confiance dans l'implémentation ; ils ne remplacent
+pas les invariants de correction ci-dessus.
+
+\clearpage
+\section{Évaluation expérimentale}
+
+\subsection{Protocole reproductible}
+
+\texttt{bench\_q6.py} lance réellement \texttt{sat.py} dans un nouveau
+processus par résolution, avec les options \texttt{--output-model} et \texttt{--stats}.
+Le délai est fixé à \textbf{60 secondes par processus}, et les lancements
+sont séquentiels. Le temps principal inclut le démarrage de Python, les
+imports, la lecture, la résolution et l'écriture du résultat. Le temps CPU
+interne inclut le prétraitement et la résolution, mais exclut les entrées
+et sorties. La vérification indépendante du modèle intervient ensuite,
+hors mesure.
+
+Le corpus comprend \textbf{91 instances} : 30 benchmarks publics,
+11 tests publics d'interface et de cas limites, 20 grilles Meowdoku SAT
+de tailles 8, 10, 12, 14 et 16 (quatre par taille), et 30 grilles à régions
+aléatoires (7 SAT, 23 UNSAT). Les 50 grilles et leurs graines sont celles
+de la question 5. Les statuts de référence proviennent du fichier public
+\texttt{expected.json}, de la construction des grilles SAT et, pour les
+régions aléatoires, de l'accord des heuristiques observé à la question 5.
+
+La campagne comporte une exécution par instance et par mode, soit
+\textbf{182 résolutions}, avec une graine DPLL dérivée du nom du fichier.
+Les mesures sont locales : Python 3.12.13, macOS 15.7.3, architecture ARM64.
+Elles ne sont pas des mesures sur la machine Linux x86\_64 de la compétition.
+Le CSV \texttt{results/q6\_runs.csv} conserve les résultats détaillés ; le
+fichier JSON associé décrit l'environnement et les paramètres.
+
+\subsection{Résultats globaux}
+
+\begin{center}\small
+\input{generated/synthese.tex}
+\end{center}
+Le temps total ne porte que sur les résolutions correctes : il doit être
+lu avec leur nombre, qui est le premier critère de classement. Le PAR-2
+est la moyenne des temps, avec une pénalité de 120 s pour chaque échec
+ou dépassement de délai. Il rend ces dépassements visibles dans une
+mesure globale ; il n'est pas le critère de classement imposé.
+
+\input{generated/analyse-globale.tex}
+
+\begin{center}
+\begin{tikzpicture}
+\begin{semilogxaxis}[width=0.90\linewidth,height=5.3cm,
+  xlabel={temps complet par instance (s)},ylabel={instances résolues},
+  xmin=0.01,xmax=60,ymin=0,ymax=95,grid=major,
+  legend pos=south east,legend style={font=\small}]
+\addplot[black,thick,mark=none] table[x=wall,y=solved] {generated/cactus-dpll.dat};
+\addlegendentry{DPLL initial}
+\addplot[blue,thick,mark=none] table[x=wall,y=solved] {generated/cactus-optimized.dat};
+\addlegendentry{Optimisé}
+\end{semilogxaxis}
+\end{tikzpicture}
+\end{center}
+
+\clearpage
+\section{Interprétation pour Meowdoku}
+
+\begin{center}\footnotesize\setlength{\tabcolsep}{4pt}
+\input{generated/tailles.tex}
+\end{center}
+Ce tableau donne les temps médians sur les quatre grilles SAT de chaque
+taille. Les temps CPU isolent le travail du solveur ; les temps du processus
+correspondent davantage à l'expérience de la compétition.
+
+\input{generated/analyse-meowdoku.tex}
+
+\paragraph{Pourquoi le gain ?} Une décision positive place un chat et
+déclenche directement les exclusions binaires de sa ligne, sa colonne,
+sa région et son voisinage. La formule n'est plus reconstruite pour chaque
+case exclue. Le choix de la région la plus contrainte ne parcourt que les
+clauses positives. Le coût d'actualisation reste ainsi limité, alors que
+les heuristiques dynamiques de la question 5 recalculaient leurs scores
+sur l'ensemble des clauses.
+
+Le gain mesuré combine un nouveau moteur de propagation et une nouvelle
+heuristique ; ce protocole ne permet pas d'attribuer une part chiffrée à
+chacune. Il compare la solution finale à l'algorithme 2, sans réutiliser
+les temps anciens de la question 5 comme s'ils appartenaient à la même
+campagne.
+
+\paragraph{Portée des résultats.} Le DPLL de référence n'est exécuté
+qu'avec une graine par instance. Une campagne à plusieurs graines serait
+nécessaire pour quantifier la variabilité de ses temps. Les mesures très
+courtes sont également sensibles à la charge et à la fréquence du
+processeur. La campagne actuelle n'est ni une garantie de gain sur toute
+CNF, ni une estimation du classement sur les instances privées.
+
+L'absence d'apprentissage de clauses limite les performances sur les
+instances exigeant de très nombreux retours arrière. Le mode général H4d
+conserve aussi un coût de parcours global par décision. Les grilles à
+régions aléatoires du corpus sont majoritairement faciles ; des Meowdoku
+UNSAT plus difficiles et des tailles supérieures permettraient d'évaluer
+plus largement la robustesse du solveur.
+
+\section{Reproduire les résultats}
+
+Depuis la racine du projet, avec Python 3.12 :
+\begin{lstlisting}
+python -m unittest discover -v
+python bench_q6.py run --timeout 60
+python bench_q6.py report
+\end{lstlisting}
+La première commande vérifie la correction. La deuxième recrée les
+instances Meowdoku et le CSV des mesures ; la troisième affiche la
+synthèse et régénère les tableaux et les données des courbes. Pour
+répéter uniquement les 50 grilles Meowdoku sans écraser la campagne
+principale :
+\begin{lstlisting}
+python bench_q6.py run --suite meowdoku --repeats 3 \
+  --csv results/q6_meow_repeats.csv
+python bench_q6.py report --csv results/q6_meow_repeats.csv
+\end{lstlisting}
+Les répétitions conservent la même graine : elles mesurent la variabilité
+temporelle, pas celle des choix aléatoires. Les durées et les compteurs
+d'une seule résolution sont accessibles avec :
+\begin{lstlisting}
+python sat.py instance.cnf --mode optimized --output-model --stats
+\end{lstlisting}
+
+\end{document}

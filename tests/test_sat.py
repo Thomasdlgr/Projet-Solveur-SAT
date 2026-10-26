@@ -42,6 +42,15 @@ class SatCliTest(unittest.TestCase):
         result = run_sat(LAMPES)
         self.assertEqual(result.stdout, "s SATISFIABLE\n")
 
+    def test_stats_only_on_stderr(self):
+        for mode in ("dpll", "optimized"):
+            result = run_sat(LAMPES, "--mode", mode, "--stats", "--seed", "6")
+            self.assertEqual(result.stdout, "s SATISFIABLE\n")
+            stats = json.loads(result.stderr)
+            self.assertEqual(stats["mode"], mode)
+            self.assertGreaterEqual(stats["solve_cpu_s"], 0)
+            self.assertIn("decisions", stats)
+
     def test_unsat_sans_modele(self):
         result = run_sat("p cnf 1 2\n1 0\n-1 0\n", "--output-model")
         self.assertEqual(result.stdout, "s UNSATISFIABLE\n")

@@ -1,5 +1,3 @@
-"""Question 3 : résoudre une grille et écrire la solution au format du sujet."""
-
 import argparse
 from itertools import combinations
 from pathlib import Path
